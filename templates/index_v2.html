@@ -2046,7 +2046,7 @@ I&apos;m {{sender_name}}, currently ...
             currentEmailIndex: 0,  // Current email being viewed
             recommendations: [],
             dedupedRecommendations: [],
-            recommendationsVisibleCount: 3,
+            recommendationsVisibleCount: 1,
             currentListUrl: null,
             backgroundFetching: false,
             totalRecommendationLimit: 50,
@@ -3622,7 +3622,7 @@ I&apos;m {{sender_name}}, currently ...
                 list.innerHTML = '';
                 state.recommendations = [];
                 state.dedupedRecommendations = [];
-                state.recommendationsVisibleCount = 3;
+                state.recommendationsVisibleCount = 1;
                 actions.style.display = 'none';
                 if (pagination) pagination.style.display = 'none';
             }
@@ -3666,7 +3666,7 @@ I&apos;m {{sender_name}}, currently ...
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             institutions: state.selectedInstitutions,
-                            limit: 3,
+                            limit: 1,
                             exclude_urls: excludeUrls,
                             list_url: listUrl
                         })
@@ -3691,12 +3691,12 @@ I&apos;m {{sender_name}}, currently ...
                     if (append) {
                         state.recommendations = (state.recommendations || []).concat(incoming);
                         const total = state.recommendations ? state.recommendations.length : 0;
-                        const currentVisible = state.recommendationsVisibleCount || 3;
+                        const currentVisible = state.recommendationsVisibleCount || 1;
                         const added = incoming.length || 0;
-                        state.recommendationsVisibleCount = Math.min(currentVisible + Math.max(added, 3), total);
+                        state.recommendationsVisibleCount = Math.min(currentVisible + Math.max(added, 1), total);
                     } else {
                         state.recommendations = incoming;
-                        state.recommendationsVisibleCount = 3;
+                        state.recommendationsVisibleCount = 1;
                     }
                     if (!state.recommendations.length) {
                         throw new Error('No advisors found');
@@ -3722,7 +3722,7 @@ I&apos;m {{sender_name}}, currently ...
             try {
                 while ((state.recommendations || []).length < (state.totalRecommendationLimit || 50)) {
                     const prevCount = state.recommendations ? state.recommendations.length : 0;
-                    await loadRecommendations({ append: prevCount > 0, incrementVisible: false, showLoading: false });
+                    await loadRecommendations({ append: prevCount > 0, incrementVisible: true, showLoading: false });
                     const newCount = state.recommendations ? state.recommendations.length : 0;
                     if (newCount <= prevCount) break; // no new items, stop
                 }
@@ -4670,7 +4670,7 @@ I&apos;m {{sender_name}}, currently ...
         function resetRecommendationState() {
             state.recommendations = [];
             state.dedupedRecommendations = [];
-            state.recommendationsVisibleCount = 3;
+            state.recommendationsVisibleCount = 1;
             state.selectedTargets = [];
             state.selectedInstitutions = [];
             state.institutionCandidates = [];
