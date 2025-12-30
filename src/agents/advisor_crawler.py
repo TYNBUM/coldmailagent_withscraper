@@ -367,6 +367,7 @@ def crawl_advisors(
     list_url: Optional[str] = None,
     limit: Optional[int] = 30,
     model: str = DEFAULT_MODEL,
+    exclude_urls: Optional[set[str]] = None,
 ) -> List[dict]:
     """
     Crawl advisor profiles for a given school/college.
@@ -396,6 +397,8 @@ def crawl_advisors(
     for nm, href in links:
         if href in seen_links:
             continue
+        if exclude_urls and href in exclude_urls:
+            continue
         seen_links.add(href)
         dedup_links.append((nm, href))
     links = dedup_links
@@ -413,6 +416,7 @@ def crawl_advisors(
 
     results: List[dict] = []
 
+    collected = 0
     for idx, (name, url) in enumerate(links, 1):
         try:
             print(f"[crawler] [{idx}/{len(links)}] fetch detail: {url}", flush=True)
@@ -420,24 +424,29 @@ def crawl_advisors(
             profile = llm_extract(txt, url, name, gemini_model)
             profile.school = school
             profile.college = college or ""
-            results.append(profile.to_dict())
+            data = profile.to_dict()
+            data["list_url"] = target_url
+            results.append(data)
             print(f"[crawler] [{idx}/{len(links)}] OK: {profile.name} ({profile.school}/{profile.college})", flush=True)
+            collected += 1
+            if limit and collected >= limit:
+                break
         except Exception as e:
             print(f"[crawler] [{idx}/{len(links)}] FAIL: {name} -> {e}", flush=True)
-            results.append(
-                AdvisorProfile(
-                    name=name,
-                    title="",
-                    mentor_type="",
-                    department="",
-                    research="",
-                    email="",
-                    homepage_url="",
-                    source_url=url,
-                    school=school,
-                    college=college or "",
-                ).to_dict()
-            )
+            data = AdvisorProfile(
+                name=name,
+                title="",
+                mentor_type="",
+                department="",
+                research="",
+                email="",
+                homepage_url="",
+                source_url=url,
+                school=school,
+                college=college or "",
+            ).to_dict()
+            data["list_url"] = target_url
+            results.append(data)
         polite_sleep()
     # Deduplicate final results by source_url (fallback to name+email), keep the richer record
     def _score(record: dict) -> int:
@@ -469,8 +478,16 @@ def crawl_advisors(
     return cleaned
 
 
-def crawl_bulk(items: Iterable[dict], *, model: str = DEFAULT_MODEL, limit: Optional[int] = 20) -> List[dict]:
+def crawl_bulk(
+    items: Iterable[dict],
+    *,
+    model: str = DEFAULT_MODEL,
+    limit: Optional[int] = 20,
+    exclude_urls: Optional[list[str]] = None,
+) -> List[dict]:
     output: List[dict] = []
+    exclude_set = set(exclude_urls or [])
+    remaining = limit
     for item in items:
         school = item.get("school") or ""
         college = item.get("college") or ""
@@ -486,11 +503,19 @@ def crawl_bulk(items: Iterable[dict], *, model: str = DEFAULT_MODEL, limit: Opti
                 college=college,
                 field=field,
                 list_url=list_url,
-                limit=count_limit,
+                limit=count_limit if count_limit is not None else remaining,
                 model=model,
+                exclude_urls=exclude_set,
             )
             print(f"[crawler] done: school={school}, scraped={len(results)}", flush=True)
+            for r in results:
+                if r.get("source_url"):
+                    exclude_set.add(r["source_url"])
             output.extend(results)
+            if remaining is not None:
+                remaining -= len(results)
+                if remaining <= 0:
+                    break
         except Exception as exc:
             print(f"[crawler] error for {school}/{college or ''}: {exc}", flush=True)
             continue

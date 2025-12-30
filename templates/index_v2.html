@@ -1709,6 +1709,9 @@
                 <div class="recommendation-list" id="recommendation-list">
                     <!-- Recommendations will be loaded here -->
                 </div>
+                <div class="btn-group" id="rec-pagination" style="display: none;">
+                    <button class="btn btn-secondary btn-icon" id="btn-show-more" type="button">Show More</button>
+                </div>
                 <div class="btn-group" id="rec-actions" style="display: none;">
                     <button class="btn btn-secondary btn-icon" id="btn-more-recs">🔄 Generate More</button>
                     <button class="btn btn-secondary btn-icon" id="btn-add-manual">➕ Add Manually</button>
@@ -2042,6 +2045,11 @@ I&apos;m {{sender_name}}, currently ...
             selectedTargets: [],  // Array of selected targets
             currentEmailIndex: 0,  // Current email being viewed
             recommendations: [],
+            dedupedRecommendations: [],
+            recommendationsVisibleCount: 3,
+            currentListUrl: null,
+            backgroundFetching: false,
+            totalRecommendationLimit: 50,
             generatedEmails: [],  // Array of {target, email} objects
             senderProfileLink: '',
             senderProfileExtra: '',
@@ -2385,6 +2393,7 @@ I&apos;m {{sender_name}}, currently ...
             setupFileUpload();
             setupProfileLinkInputs();
             setupTargetingContextInputs();
+            setupRecommendationPagination();
             setupEmailContextInputs();
             setupNavigationButtons();
             setupQuickStartQuestionPrompt();
@@ -2393,6 +2402,7 @@ I&apos;m {{sender_name}}, currently ...
             setupRegenerate();
             setupTargetDocUpload();
             setupPreferenceForm();
+            startBackgroundRecommendations();
         });
 
         // Setup mode selection
@@ -2903,7 +2913,9 @@ I&apos;m {{sender_name}}, currently ...
             const btn = document.getElementById('btn-find-matches');
             if (btn) {
                 btn.addEventListener('click', function() {
-                    loadRecommendations();
+                    loadRecommendations({ append: false, incrementVisible: true, showLoading: true }).then(() => {
+                        backgroundFetchLoop();
+                    });
                 });
             }
         }
@@ -3110,7 +3122,8 @@ I&apos;m {{sender_name}}, currently ...
 
         // Open profile modal for a recommendation
         function openProfileModal(index) {
-            const rec = state.recommendations[index];
+            const source = state.dedupedRecommendations || state.recommendations || [];
+            const rec = source[index];
             if (!rec) return;
             
             state.currentModalTarget = { index, rec };
@@ -3596,14 +3609,24 @@ I&apos;m {{sender_name}}, currently ...
         }
 
 // Load recommendations
-        async function loadRecommendations() {
+        async function loadRecommendations(options = {}) {
+            const append = options.append || false;
+            const incrementVisible = options.incrementVisible !== false; // default true
+            const showLoading = options.showLoading !== false; // default true
             const list = document.getElementById('recommendation-list');
             const loading = document.getElementById('rec-loading');
             const actions = document.getElementById('rec-actions');
+            const pagination = document.getElementById('rec-pagination');
             
-            list.innerHTML = '';
-            loading.classList.add('visible');
-            actions.style.display = 'none';
+            if (!append) {
+                list.innerHTML = '';
+                state.recommendations = [];
+                state.dedupedRecommendations = [];
+                state.recommendationsVisibleCount = 3;
+                actions.style.display = 'none';
+                if (pagination) pagination.style.display = 'none';
+            }
+            if (showLoading) loading.classList.add('visible');
             document.getElementById('recommendation-section').classList.remove('hidden');
             
             async function fetchAiRecommendations() {
@@ -3634,12 +3657,18 @@ I&apos;m {{sender_name}}, currently ...
                 let data;
                 const hasInstitutions = state.selectedInstitutions && state.selectedInstitutions.length > 0;
                 if (hasInstitutions) {
+                    const excludeUrls = Array.isArray(state.dedupedRecommendations)
+                        ? state.dedupedRecommendations.map(r => r.source_url).filter(Boolean)
+                        : [];
+                    const listUrl = state.currentListUrl || null;
                     const response = await fetch('/api/scrape-advisors', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             institutions: state.selectedInstitutions,
-                            limit: 20
+                            limit: 3,
+                            exclude_urls: excludeUrls,
+                            list_url: listUrl
                         })
                     });
                     data = await response.json();
@@ -3652,9 +3681,23 @@ I&apos;m {{sender_name}}, currently ...
                 }
 
                 if (data.success) {
-                    loading.classList.remove('visible');
+                    if (showLoading) loading.classList.remove('visible');
                     actions.style.display = 'flex';
-                    state.recommendations = data.advisors || data.recommendations || [];
+                    const incoming = data.advisors || data.recommendations || [];
+                    // Persist list_url if returned
+                    if (!state.currentListUrl && incoming && incoming.length > 0 && incoming[0].list_url) {
+                        state.currentListUrl = incoming[0].list_url;
+                    }
+                    if (append) {
+                        state.recommendations = (state.recommendations || []).concat(incoming);
+                        const total = state.recommendations ? state.recommendations.length : 0;
+                        const currentVisible = state.recommendationsVisibleCount || 3;
+                        const added = incoming.length || 0;
+                        state.recommendationsVisibleCount = Math.min(currentVisible + Math.max(added, 3), total);
+                    } else {
+                        state.recommendations = incoming;
+                        state.recommendationsVisibleCount = 3;
+                    }
                     if (!state.recommendations.length) {
                         throw new Error('No advisors found');
                     }
@@ -3663,8 +3706,30 @@ I&apos;m {{sender_name}}, currently ...
                     throw new Error(data.error || 'Failed to find recommendations');
                 }
             } catch (error) {
-                loading.classList.remove('visible');
+                if (showLoading) loading.classList.remove('visible');
                 alert('Error finding recommendations: ' + error.message);
+            }
+        }
+
+        // Background fetch: keep pulling batches of 3 until limit reached or no new items
+        function startBackgroundRecommendations() {
+            state.backgroundFetching = false;
+        }
+
+        async function backgroundFetchLoop() {
+            if (state.backgroundFetching) return;
+            state.backgroundFetching = true;
+            try {
+                while ((state.recommendations || []).length < (state.totalRecommendationLimit || 50)) {
+                    const prevCount = state.recommendations ? state.recommendations.length : 0;
+                    await loadRecommendations({ append: prevCount > 0, incrementVisible: false, showLoading: false });
+                    const newCount = state.recommendations ? state.recommendations.length : 0;
+                    if (newCount <= prevCount) break; // no new items, stop
+                }
+            } catch (e) {
+                console.error('Background recommendations error:', e);
+            } finally {
+                state.backgroundFetching = false;
             }
         }
 
@@ -3699,7 +3764,11 @@ I&apos;m {{sender_name}}, currently ...
                 deduped.push(rec);
             });
 
-            deduped.forEach((rec, index) => {
+            state.dedupedRecommendations = deduped;
+            const visibleCount = state.recommendationsVisibleCount || 5;
+            const visible = deduped.slice(0, visibleCount);
+
+            visible.forEach((rec, index) => {
                 const item = document.createElement('div');
                 item.className = 'recommendation-item';
                 item.dataset.index = index;
@@ -3736,11 +3805,33 @@ I&apos;m {{sender_name}}, currently ...
                 
                 list.appendChild(item);
             });
+
+            const pagination = document.getElementById('rec-pagination');
+            const btnShowMore = document.getElementById('btn-show-more');
+            if (pagination && btnShowMore) {
+                if (deduped.length > visible.length) {
+                    pagination.style.display = 'flex';
+                    btnShowMore.disabled = false;
+                } else {
+                    pagination.style.display = 'none';
+                }
+            }
+        }
+
+        // Pagination for recommendations (show 5 at a time)
+        function setupRecommendationPagination() {
+            const btnShowMore = document.getElementById('btn-show-more');
+            if (!btnShowMore) return;
+            btnShowMore.addEventListener('click', function() {
+                state.recommendationsVisibleCount = (state.recommendationsVisibleCount || 5) + 5;
+                renderRecommendations(state.recommendations || []);
+            });
         }
 
         // Toggle recommendation selection (multi-select)
         function toggleRecommendation(index) {
-            const rec = state.recommendations[index];
+            const source = state.dedupedRecommendations || state.recommendations || [];
+            const rec = source[index];
             const existingIndex = state.selectedTargets.findIndex(t => t.name === rec.name);
             
             if (existingIndex >= 0) {
@@ -3956,7 +4047,9 @@ I&apos;m {{sender_name}}, currently ...
             });
 
             // More recommendations
-            document.getElementById('btn-more-recs').addEventListener('click', loadRecommendations);
+            document.getElementById('btn-more-recs').addEventListener('click', function() {
+                loadRecommendations({ append: true, incrementVisible: true, showLoading: true });
+            });
 
             // Add manual target from recommendations
             document.getElementById('btn-add-manual').addEventListener('click', function() {
@@ -4576,15 +4669,19 @@ I&apos;m {{sender_name}}, currently ...
 
         function resetRecommendationState() {
             state.recommendations = [];
+            state.dedupedRecommendations = [];
+            state.recommendationsVisibleCount = 3;
             state.selectedTargets = [];
             state.selectedInstitutions = [];
             state.institutionCandidates = [];
+            state.currentListUrl = null;
             updateSelectedTargetsUI();
             
             const list = document.getElementById('recommendation-list');
             const actions = document.getElementById('rec-actions');
             const loading = document.getElementById('rec-loading');
             const details = document.getElementById('match-details');
+            const pagination = document.getElementById('rec-pagination');
             if (list) list.innerHTML = '';
             if (actions) actions.style.display = 'none';
             if (loading) loading.classList.remove('visible');
@@ -4593,6 +4690,8 @@ I&apos;m {{sender_name}}, currently ...
             if (instList) instList.innerHTML = '';
             const instError = document.getElementById('institution-error');
             if (instError) instError.style.display = 'none';
+            if (pagination) pagination.style.display = 'none';
+            state.backgroundFetching = false;
             checkStep3Valid();
         }
 

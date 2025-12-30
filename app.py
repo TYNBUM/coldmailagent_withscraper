@@ -549,13 +549,18 @@ def api_scrape_advisors():
     data = request.get_json() or {}
     institutions = data.get('institutions') or []
     limit = data.get('limit')
+    exclude_urls = data.get('exclude_urls') or []
+    list_url = data.get('list_url')
 
     if not isinstance(institutions, list) or not institutions:
         return jsonify({'error': 'institutions list is required'}), 400
 
     try:
         print(f"[api] scrape-advisors start, institutions={institutions}", flush=True)
-        advisors = crawl_bulk(institutions, limit=limit)
+        # If a list_url is provided, attach it to the first institution
+        if list_url and isinstance(institutions[0], dict):
+            institutions[0]["list_url"] = list_url
+        advisors = crawl_bulk(institutions, limit=limit, exclude_urls=exclude_urls)
         print(f"[api] scrape-advisors done, found={len(advisors)}", flush=True)
         if not advisors:
             return jsonify({'error': 'No advisors found'}), 500
