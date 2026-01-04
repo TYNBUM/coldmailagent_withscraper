@@ -45,10 +45,11 @@ class AdvisorProfile:
     experiences: list = None
     skills: list = None
     projects: list = None
+    publications: list = None
 
     def __post_init__(self):
         # Normalize list fields
-        for field_name in ["education", "experiences", "skills", "projects"]:
+        for field_name in ["education", "experiences", "skills", "projects", "publications"]:
             val = getattr(self, field_name)
             if val is None:
                 setattr(self, field_name, [])
@@ -179,6 +180,8 @@ Return strict JSON with keys:
 - experiences (list of strings)
 - skills (list of strings)
 - projects (list of strings)
+- publications (list of strings; include publication titles/citations explicitly mentioned on the page)
+- publications (list of strings; include titles or citations explicitly mentioned)
 
 fallback_name: {fallback_name}
 source_url: {source_url}
@@ -213,6 +216,7 @@ Visible Page Text (truncated):
             experiences=[],
             skills=[],
             projects=[],
+            publications=[],
         )
 
     try:
@@ -230,10 +234,10 @@ Visible Page Text (truncated):
         obj["name"] = fallback_name
     obj["source_url"] = source_url
     # Ensure required keys exist
-    for key in ["title", "mentor_type", "department", "research", "email", "homepage_url", "education", "experiences", "skills", "projects"]:
+    for key in ["title", "mentor_type", "department", "research", "email", "homepage_url", "education", "experiences", "skills", "projects", "publications"]:
         obj.setdefault(key, "")
     # Normalize list fields before dataclass init
-    for key in ["education", "experiences", "skills", "projects"]:
+    for key in ["education", "experiences", "skills", "projects", "publications"]:
         val = obj.get(key, [])
         if isinstance(val, str):
             obj[key] = [val] if val.strip() else []
@@ -262,7 +266,7 @@ def clean_profiles_with_gemini(profiles: list[dict], model, max_items: int = 40)
         "that are NOT a person (e.g., names containing people/faculty/staff/office/department/center/lab/research). "
         "Return ONLY JSON array; do not include explanations.\n\n"
         "Required keys per item: name, title, mentor_type, department, research, email, homepage_url, "
-        "source_url, school, college, education (list), experiences (list), skills (list), projects (list).\n"
+        "source_url, school, college, education (list), experiences (list), skills (list), projects (list), publications (list).\n"
         f"Input JSON:\n{subset}\n"
     )
     def _is_person(name: str) -> bool:
@@ -301,7 +305,7 @@ def clean_profiles_with_gemini(profiles: list[dict], model, max_items: int = 40)
                 continue
             for key in ["title", "mentor_type", "department", "research", "email", "homepage_url", "source_url", "school", "college"]:
                 item.setdefault(key, "")
-            for key in ["education", "experiences", "skills", "projects"]:
+            for key in ["education", "experiences", "skills", "projects", "publications"]:
                 val = item.get(key, [])
                 if isinstance(val, str):
                     item[key] = [val] if val.strip() else []
@@ -365,14 +369,16 @@ def crawl_advisors(
     college: Optional[str] = None,
     field: Optional[str] = None,
     list_url: Optional[str] = None,
-    limit: Optional[int] = 30,
+    limit: Optional[int] = 50,
     model: str = DEFAULT_MODEL,
     exclude_urls: Optional[set[str]] = None,
+    include_details: bool = True,
 ) -> List[dict]:
     """
     Crawl advisor profiles for a given school/college.
     If list_url is not provided, this function will try DuckDuckGo then Google CSE
     to find a probable faculty directory and crawl that page.
+    If include_details is False, only return list-page candidates (name + URL) without visiting detail pages.
     """
     gemini_model = get_gemini_model(model_name=model)
     query = " ".join([s for s in [school, college, field, "faculty list"] if s])
@@ -419,6 +425,33 @@ def crawl_advisors(
     collected = 0
     for idx, (name, url) in enumerate(links, 1):
         try:
+            if not include_details:
+                # List-only mode: return minimal info without visiting detail pages
+                data = {
+                    "name": name,
+                    "title": "",
+                    "mentor_type": "",
+                    "department": "",
+                    "research": "",
+                    "email": "",
+                    "homepage_url": "",
+                    "source_url": url,
+                    "school": school,
+                    "college": college or "",
+                    "education": [],
+                    "experiences": [],
+                    "skills": [],
+                    "projects": [],
+                    "publications": [],
+                    "list_url": target_url,
+                    "detail_loaded": False,
+                }
+                results.append(data)
+                collected += 1
+                if limit and collected >= limit:
+                    break
+                continue
+
             print(f"[crawler] [{idx}/{len(links)}] fetch detail: {url}", flush=True)
             txt = browser_get_visible_text(url)
             profile = llm_extract(txt, url, name, gemini_model)
@@ -450,7 +483,7 @@ def crawl_advisors(
         polite_sleep()
     # Deduplicate final results by source_url (fallback to name+email), keep the richer record
     def _score(record: dict) -> int:
-        fields = ["title", "mentor_type", "department", "research", "email", "education", "experiences", "skills", "projects"]
+        fields = ["title", "mentor_type", "department", "research", "email", "education", "experiences", "skills", "projects", "publications"]
         score = 0
         for f in fields:
             val = record.get(f)
@@ -474,16 +507,38 @@ def crawl_advisors(
         deduped.append(r)
 
     # Final Gemini cleaning/dedup (batch)
-    cleaned = clean_profiles_with_gemini(deduped, gemini_model)
+    cleaned = clean_profiles_with_gemini(deduped, gemini_model) if gemini_model else deduped
     return cleaned
+
+
+def crawl_single_detail(
+    name: str,
+    url: str,
+    *,
+    school: str = "",
+    college: str = "",
+    list_url: Optional[str] = None,
+    model: str = DEFAULT_MODEL,
+) -> dict:
+    """Fetch and parse a single advisor detail page."""
+    gemini_model = get_gemini_model(model_name=model)
+    print(f"[crawler] fetch detail (single): {url}", flush=True)
+    txt = browser_get_visible_text(url)
+    profile = llm_extract(txt, url, name, gemini_model)
+    profile.school = school
+    profile.college = college or ""
+    data = profile.to_dict()
+    data["list_url"] = list_url
+    return data
 
 
 def crawl_bulk(
     items: Iterable[dict],
     *,
     model: str = DEFAULT_MODEL,
-    limit: Optional[int] = 20,
+    limit: Optional[int] = 50,
     exclude_urls: Optional[list[str]] = None,
+    include_details: bool = True,
 ) -> List[dict]:
     output: List[dict] = []
     exclude_set = set(exclude_urls or [])
@@ -506,6 +561,7 @@ def crawl_bulk(
                 limit=count_limit if count_limit is not None else remaining,
                 model=model,
                 exclude_urls=exclude_set,
+                include_details=include_details,
             )
             print(f"[crawler] done: school={school}, scraped={len(results)}", flush=True)
             for r in results:

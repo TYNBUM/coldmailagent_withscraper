@@ -1602,7 +1602,7 @@
 
                 <div class="form-group" id="institution-section">
                     <label>AI-recommended schools/colleges</label>
-                    <p style="font-size: 12px; color: #666; margin-bottom: 10px;">Select学校/学院后，点击 Find Matches 爬取导师信息。</p>
+                    <p style="font-size: 12px; color: #666; margin-bottom: 10px;">Select schools/colleges, then click Find Matches to fetch advisor info.</p>
                     <div id="institution-loading" class="loading hidden">
                         <div class="spinner"></div>
                         <div class="loading-text">Generating school/college recommendations...</div>
@@ -1706,17 +1706,18 @@
                     <div class="spinner"></div>
                     <div class="loading-text">Finding the best matches for you...</div>
                 </div>
-                <div class="recommendation-list" id="recommendation-list">
-                    <!-- Recommendations will be loaded here -->
-                </div>
-                <div class="btn-group" id="rec-pagination" style="display: none;">
-                    <button class="btn btn-secondary btn-icon" id="btn-show-more" type="button">Show More</button>
-                </div>
-                <div class="btn-group" id="rec-actions" style="display: none;">
-                    <button class="btn btn-secondary btn-icon" id="btn-more-recs">🔄 Generate More</button>
-                    <button class="btn btn-secondary btn-icon" id="btn-add-manual">➕ Add Manually</button>
-                </div>
+            <div class="recommendation-list" id="recommendation-list">
+                <!-- Recommendations will be loaded here -->
             </div>
+            <div class="btn-group" id="rec-pagination" style="display: none;">
+                <button class="btn btn-secondary btn-icon" id="btn-show-more" type="button">Show More</button>
+            </div>
+            <div class="btn-group" id="rec-actions" style="display: none;">
+                <button class="btn btn-secondary btn-icon" id="btn-more-recs">🔄 Generate More</button>
+                <button class="btn btn-secondary btn-icon" id="btn-add-manual">➕ Add Manually</button>
+                <button class="btn btn-secondary btn-icon" id="btn-reset-crawler">⏹ Reset Crawler</button>
+            </div>
+        </div>
 
             <!-- Selected Targets Display -->
             <div class="selected-targets" id="selected-targets">
@@ -1969,6 +1970,10 @@ I&apos;m {{sender_name}}, currently ...
                 <button class="modal-close" onclick="closeProfileModal()">×</button>
             </div>
             <div class="profile-section">
+                <button class="btn btn-secondary" id="btn-fetch-detail" style="width: 100%;">Fetch detail</button>
+                <p id="detail-loading-hint" style="display:none; color:#666; margin-top:8px;">Fetching detail...</p>
+            </div>
+            <div class="profile-section">
                 <h4>🎯 Position</h4>
                 <p id="modal-position">-</p>
             </div>
@@ -1991,6 +1996,10 @@ I&apos;m {{sender_name}}, currently ...
             <div class="profile-section">
                 <h4>📂 Projects</h4>
                 <ul id="modal-projects"><li>-</li></ul>
+            </div>
+            <div class="profile-section">
+                <h4>📚 Publications</h4>
+                <ul id="modal-publications"><li>-</li></ul>
             </div>
             <div class="profile-section">
                 <h4>💡 Why This Match</h4>
@@ -2049,6 +2058,7 @@ I&apos;m {{sender_name}}, currently ...
             recommendationsVisibleCount: 1,
             currentListUrl: null,
             backgroundFetching: false,
+            crawlToken: 0,
             totalRecommendationLimit: 50,
             generatedEmails: [],  // Array of {target, email} objects
             senderProfileLink: '',
@@ -2913,6 +2923,12 @@ I&apos;m {{sender_name}}, currently ...
             const btn = document.getElementById('btn-find-matches');
             if (btn) {
                 btn.addEventListener('click', function() {
+                    // Reset crawl state when user re-runs find matches
+                    state.crawlToken++;
+                    state.recommendations = [];
+                    state.dedupedRecommendations = [];
+                    state.recommendationsVisibleCount = 1;
+                    state.currentListUrl = null;
                     loadRecommendations({ append: false, incrementVisible: true, showLoading: true }).then(() => {
                         backgroundFetchLoop();
                     });
@@ -3121,27 +3137,26 @@ I&apos;m {{sender_name}}, currently ...
         }
 
         // Open profile modal for a recommendation
-        function openProfileModal(index) {
-            const source = state.dedupedRecommendations || state.recommendations || [];
-            const rec = source[index];
-            if (!rec) return;
-            
-            state.currentModalTarget = { index, rec };
-            
+        function renderProfileModalFields(rec) {
             document.getElementById('modal-target-name').textContent = rec.name;
-            document.getElementById('modal-position').textContent = rec.position || rec.field || '-';
-            document.getElementById('modal-match-score').innerHTML = `<span style="color: ${rec.match_score >= 80 ? '#28a745' : rec.match_score >= 60 ? '#ffc107' : '#dc3545'}; font-weight: bold;">${rec.match_score}%</span> compatibility`;
+            document.getElementById('modal-position').textContent = rec.position || rec.title || rec.field || '-';
+            if (rec.match_score || rec.match_score === 0) {
+                const color = rec.match_score >= 80 ? '#28a745' : rec.match_score >= 60 ? '#ffc107' : '#dc3545';
+                document.getElementById('modal-match-score').innerHTML = `<span style="color: ${color}; font-weight: bold;">${rec.match_score}%</span> compatibility`;
+            } else {
+                document.getElementById('modal-match-score').textContent = '';
+            }
             document.getElementById('modal-match-reason').textContent = rec.match_reason || '-';
             document.getElementById('modal-uncertainty').textContent = rec.uncertainty || '-';
             
-            // Show education, experience, skills, projects if available (fetched profile)
             const eduList = document.getElementById('modal-education');
             const expList = document.getElementById('modal-experience');
             const skillList = document.getElementById('modal-skills');
             const projList = document.getElementById('modal-projects');
+            const pubList = document.getElementById('modal-publications');
             const evidenceList = document.getElementById('modal-evidence');
             const sourcesList = document.getElementById('modal-sources');
-            
+
             if (rec.education && rec.education.length) {
                 eduList.innerHTML = rec.education.map(e => `<li>${e}</li>`).join('');
             } else {
@@ -3166,6 +3181,12 @@ I&apos;m {{sender_name}}, currently ...
                 projList.innerHTML = '<li style="color: #999;">Will be fetched when generating email</li>';
             }
 
+            if (rec.publications && rec.publications.length) {
+                pubList.innerHTML = rec.publications.map(p => `<li>${p}</li>`).join('');
+            } else {
+                pubList.innerHTML = '<li style="color: #999;">Will be fetched when generating email</li>';
+            }
+
             evidenceList.innerHTML = '';
             if (Array.isArray(rec.evidence) && rec.evidence.length) {
                 rec.evidence.forEach(e => {
@@ -3181,35 +3202,95 @@ I&apos;m {{sender_name}}, currently ...
             }
 
             sourcesList.innerHTML = '';
-            if (Array.isArray(rec.sources) && rec.sources.length) {
-                const urls = rec.sources.map(u => String(u || '').trim()).filter(Boolean);
-                if (urls.length) {
-                    urls.forEach(url => {
-                        const li = document.createElement('li');
-                        if (/^https?:\/\//i.test(url)) {
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.target = '_blank';
-                            a.rel = 'noopener noreferrer';
-                            a.textContent = url;
-                            li.appendChild(a);
-                        } else {
-                            li.textContent = url;
-                        }
-                        sourcesList.appendChild(li);
-                    });
-                } else {
+            const urls = [];
+            if (Array.isArray(rec.sources)) {
+                rec.sources.forEach(u => {
+                    const s = String(u || '').trim();
+                    if (s) urls.push(s);
+                });
+            }
+            if (rec.source_url && !urls.includes(rec.source_url)) {
+                urls.push(rec.source_url);
+            }
+            if (urls.length) {
+                urls.forEach(url => {
                     const li = document.createElement('li');
-                    li.style.color = '#999';
-                    li.textContent = 'No sources';
+                    if (/^https?:\/\//i.test(url)) {
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.target = '_blank';
+                        a.rel = 'noopener noreferrer';
+                        a.textContent = url;
+                        li.appendChild(a);
+                    } else {
+                        li.textContent = url;
+                    }
                     sourcesList.appendChild(li);
-                }
+                });
             } else {
                 const li = document.createElement('li');
                 li.style.color = '#999';
                 li.textContent = 'No sources';
                 sourcesList.appendChild(li);
             }
+        }
+
+        async function fetchDetailFor(rec, index) {
+            if (!rec || rec.detail_loaded || rec._detail_loading) return;
+            rec._detail_loading = true;
+            const hint = document.getElementById('detail-loading-hint');
+            if (hint) hint.style.display = 'block';
+            try {
+                const payload = {
+                    url: rec.source_url || rec.homepage_url,
+                    name: rec.name,
+                    school: rec.school || '',
+                    college: rec.college || '',
+                    list_url: rec.list_url || ''
+                };
+                const resp = await fetch('/api/fetch-advisor-detail', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (data.success && data.profile) {
+                    Object.assign(rec, data.profile, { detail_loaded: true });
+                    renderRecommendations(state.recommendations || []);
+                    if (state.currentModalTarget && recommendationKey(state.currentModalTarget.rec) === recommendationKey(rec)) {
+                        const btn = document.getElementById('btn-fetch-detail');
+                        if (btn) {
+                            btn.disabled = true;
+                            btn.textContent = 'Detail loaded';
+                        }
+                        renderProfileModalFields(rec);
+                    }
+                }
+            } catch (e) {
+                console.error('fetch-advisor-detail failed', e);
+            } finally {
+                rec._detail_loading = false;
+                if (hint) hint.style.display = 'none';
+            }
+        }
+
+        async function openProfileModalByKey(key) {
+            const source = state.dedupedRecommendations || state.recommendations || [];
+            const rec = source.find(r => recommendationKey(r) === key);
+            if (!rec) return;
+            const index = source.indexOf(rec);
+            
+            state.currentModalTarget = { index, rec };
+            const fetchBtn = document.getElementById('btn-fetch-detail');
+            if (fetchBtn) {
+                fetchBtn.onclick = () => fetchDetailFor(rec, index);
+                fetchBtn.disabled = rec.detail_loaded;
+                fetchBtn.textContent = rec.detail_loaded ? 'Detail loaded' : 'Fetch detail';
+            }
+            const hint = document.getElementById('detail-loading-hint');
+            if (hint) hint.style.display = 'none';
+            
+            renderProfileModalFields(rec);
             
             document.getElementById('profile-modal').classList.add('visible');
         }
@@ -3223,7 +3304,8 @@ I&apos;m {{sender_name}}, currently ...
         // Select target from modal
         function selectFromModal() {
             if (state.currentModalTarget) {
-                toggleRecommendation(state.currentModalTarget.index);
+                const key = recommendationKey(state.currentModalTarget.rec);
+                toggleRecommendationByKey(key);
                 closeProfileModal();
             }
         }
@@ -3608,7 +3690,7 @@ I&apos;m {{sender_name}}, currently ...
             return;
         }
 
-// Load recommendations
+        // Load recommendations
         async function loadRecommendations(options = {}) {
             const append = options.append || false;
             const incrementVisible = options.incrementVisible !== false; // default true
@@ -3666,7 +3748,7 @@ I&apos;m {{sender_name}}, currently ...
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             institutions: state.selectedInstitutions,
-                            limit: 1,
+                            limit: 20,
                             exclude_urls: excludeUrls,
                             list_url: listUrl
                         })
@@ -3718,9 +3800,11 @@ I&apos;m {{sender_name}}, currently ...
 
         async function backgroundFetchLoop() {
             if (state.backgroundFetching) return;
+            const token = ++state.crawlToken;
             state.backgroundFetching = true;
             try {
                 while ((state.recommendations || []).length < (state.totalRecommendationLimit || 50)) {
+                    if (token !== state.crawlToken) break;
                     const prevCount = state.recommendations ? state.recommendations.length : 0;
                     await loadRecommendations({ append: prevCount > 0, incrementVisible: true, showLoading: false });
                     const newCount = state.recommendations ? state.recommendations.length : 0;
@@ -3731,6 +3815,10 @@ I&apos;m {{sender_name}}, currently ...
             } finally {
                 state.backgroundFetching = false;
             }
+        }
+
+        function recommendationKey(rec) {
+            return (rec && (rec.source_url || `${rec.name || ''}|${rec.email || ''}`)) || '';
         }
 
         // Render recommendations
@@ -3750,14 +3838,14 @@ I&apos;m {{sender_name}}, currently ...
                 if (/[0-9]/.test(n) || n.length < 2 || n.length > 80) return false;
                 // Reject common non-person labels
                 const lower = n.toLowerCase();
-                const badTokens = ["people", "faculty", "staff", "office", "department", "center", "lab", "research", "committee"];
+                const badTokens = ["people", "faculty", "staff", "office", "department", "center", "lab", "research", "committee", "and", "student"];
                 if (badTokens.some(t => lower.includes(t))) return false;
                 // Require at least one space or capitalized word (to avoid single words like "AI")
                 return /\s/.test(n) || /^[A-Z][a-z.'-]{2,}$/.test(n);
             }
 
             recommendations.forEach((rec) => {
-                const key = rec.source_url || `${rec.name || ''}|${rec.email || ''}`;
+                const key = recommendationKey(rec);
                 if (seen.has(key)) return;
                 seen.add(key);
                 if (!isLikelyPersonName(rec.name)) return;
@@ -3769,15 +3857,18 @@ I&apos;m {{sender_name}}, currently ...
             const visible = deduped.slice(0, visibleCount);
 
             visible.forEach((rec, index) => {
+                const recKey = recommendationKey(rec);
                 const item = document.createElement('div');
                 item.className = 'recommendation-item';
                 item.dataset.index = index;
+                item.dataset.key = recKey;
                 
                 // Check if already selected
-                const isSelected = state.selectedTargets.some(t => t.name === rec.name);
+                const isSelected = state.selectedTargets.some(t => recommendationKey(t) === recKey);
                 if (isSelected) item.classList.add('selected');
                 
-                const matchClass = rec.match_score >= 80 ? 'high' : (rec.match_score >= 60 ? 'medium' : 'low');
+            const hasScore = rec.match_score || rec.match_score === 0;
+            const matchClass = hasScore && rec.match_score >= 80 ? 'high' : (hasScore && rec.match_score >= 60 ? 'medium' : 'low');
                 
                 const avatar = (rec.name || '?').trim().charAt(0) || '?';
                 const position = rec.position || rec.title || rec.field || '-';
@@ -3785,7 +3876,7 @@ I&apos;m {{sender_name}}, currently ...
                 const email = rec.email || '-';
 
                 item.innerHTML = `
-                    <div class="rec-checkbox">${isSelected ? '?' : ''}</div>
+                    <div class="rec-checkbox">${isSelected ? '✓' : ''}</div>
                     <div class="rec-avatar">${avatar}</div>
                     <div class="rec-info">
                         <div class="rec-name">${rec.name}</div>
@@ -3793,13 +3884,13 @@ I&apos;m {{sender_name}}, currently ...
                         <div class="rec-field" style="color:#4a5568;">🔬 ${research}</div>
                         <div class="rec-field" style="color:#4a5568;">📧 ${email}</div>
                     </div>
-                    <button class="view-profile-btn" onclick="event.stopPropagation(); openProfileModal(${index})">📋 View</button>
-                    <div class="rec-match ${matchClass}">${rec.match_score}% Match</div>
+                    <button class="view-profile-btn" onclick="event.stopPropagation(); openProfileModalByKey('${recKey.replace(/'/g, "\\'")}')">📋 View</button>
+                    <div class="rec-match ${matchClass}">${hasScore ? rec.match_score + '% Match' : ''}</div>
                 `;
                 
                 item.addEventListener('click', function(e) {
                     if (!e.target.classList.contains('view-profile-btn')) {
-                        toggleRecommendation(index);
+                        toggleRecommendationByKey(recKey);
                     }
                 });
                 
@@ -3829,10 +3920,11 @@ I&apos;m {{sender_name}}, currently ...
         }
 
         // Toggle recommendation selection (multi-select)
-        function toggleRecommendation(index) {
+        function toggleRecommendationByKey(key) {
             const source = state.dedupedRecommendations || state.recommendations || [];
-            const rec = source[index];
-            const existingIndex = state.selectedTargets.findIndex(t => t.name === rec.name);
+            const rec = source.find(r => recommendationKey(r) === key);
+            if (!rec) return;
+            const existingIndex = state.selectedTargets.findIndex(t => recommendationKey(t) === key);
             
             if (existingIndex >= 0) {
                 // Remove from selection
@@ -3877,9 +3969,8 @@ I&apos;m {{sender_name}}, currently ...
             
             // Update recommendation list checkboxes
             document.querySelectorAll('.recommendation-item').forEach(item => {
-                const index = parseInt(item.dataset.index);
-                const rec = state.recommendations[index];
-                const isSelected = state.selectedTargets.some(t => t.name === rec.name);
+                const recKey = item.dataset.key || '';
+                const isSelected = state.selectedTargets.some(t => recommendationKey(t) === recKey);
                 
                 if (isSelected) {
                     item.classList.add('selected');
@@ -4050,6 +4141,13 @@ I&apos;m {{sender_name}}, currently ...
             document.getElementById('btn-more-recs').addEventListener('click', function() {
                 loadRecommendations({ append: true, incrementVisible: true, showLoading: true });
             });
+            const resetBtn = document.getElementById('btn-reset-crawler');
+            if (resetBtn) {
+                resetBtn.addEventListener('click', function() {
+                    state.crawlToken++;
+                    resetRecommendationState();
+                });
+            }
 
             // Add manual target from recommendations
             document.getElementById('btn-add-manual').addEventListener('click', function() {
@@ -4675,6 +4773,7 @@ I&apos;m {{sender_name}}, currently ...
             state.selectedInstitutions = [];
             state.institutionCandidates = [];
             state.currentListUrl = null;
+            state.crawlToken++;
             updateSelectedTargetsUI();
             
             const list = document.getElementById('recommendation-list');

@@ -1,5 +1,10 @@
 # notes.md — Cold Email Generator
 
+## 2026-01-04 updates (quick notes)
+- Crawler list/detail split：`/api/scrape-advisors` 只拿名单页，弹窗的 “Fetch detail” 按需调用 `/api/fetch-advisor-detail` 抓详情。
+- 选中/去重：前端用 `source_url`（或 `name|email`）作为唯一 key，避免同名误选；弹窗抓到详情后立即刷新展示。
+- Limit：后端默认 50，前端名单批次 `limit=20`，后台循环批量直到总上限；“Find Matches” 会重置 crawler 状态再跑。
+
 ## 0. 项目目标（一句话）
 
 从两个人身上尽可能多的信息里，  

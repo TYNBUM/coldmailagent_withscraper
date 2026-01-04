@@ -1,5 +1,12 @@
 # Development Log
 
+## 2026-01-04: Crawler list/detail split, on-demand detail fetch, selection fixes
+
+- Crawler: `/api/scrape-advisors` now returns list-page cards only (no detail crawl); added `/api/fetch-advisor-detail` to fetch a single profile on demand. Added `include_details`/`detail_loaded` plumbing and `crawl_single_detail`.
+- Frontend: Step 3 card rendering now requests up to 20 list items per batch (default total 50). Added "Fetch detail" button in the profile modal; detail fetch updates the open modal immediately. Selection logic now keys by `source_url` (fallback `name|email`) to avoid cross-selection on duplicate names; fixed `recKey` init error.
+- Defaults: Backend crawl limits raised to 50; frontend list fetch limit set to 20. Find Matches now resets crawler state when rerun.
+- Files touched: `app.py`, `src/agents/advisor_crawler.py`, `templates/index_v2.html`.
+
 ## 2025-12-16: Context Expansion (Targeting + Email)
 
 - Step 3: added optional structured targeting inputs (ideal target description, must-have/must-not keywords, location, reply vs prestige, examples, evidence) for both Quick and Professional, and passed them into `preferences` for `POST /api/find-recommendations`.

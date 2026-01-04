@@ -22,7 +22,7 @@ from src.email_agent import (
     regenerate_email_with_style,
 )
 from src.web_scraper import extract_person_profile_from_web
-from src.agents.advisor_crawler import crawl_bulk
+from src.agents.advisor_crawler import crawl_bulk, crawl_single_detail
 from config import DEFAULT_MODEL
 
 app = Flask(__name__)
@@ -548,7 +548,7 @@ def api_scrape_advisors():
     """Crawl advisor profiles for selected schools/colleges."""
     data = request.get_json() or {}
     institutions = data.get('institutions') or []
-    limit = data.get('limit')
+    limit = data.get('limit', 50)
     exclude_urls = data.get('exclude_urls') or []
     list_url = data.get('list_url')
 
@@ -560,13 +560,44 @@ def api_scrape_advisors():
         # If a list_url is provided, attach it to the first institution
         if list_url and isinstance(institutions[0], dict):
             institutions[0]["list_url"] = list_url
-        advisors = crawl_bulk(institutions, limit=limit, exclude_urls=exclude_urls)
+        # List-only crawl: return minimal cards, detail pages fetched on demand
+        advisors = crawl_bulk(institutions, limit=limit, exclude_urls=exclude_urls, include_details=False)
         print(f"[api] scrape-advisors done, found={len(advisors)}", flush=True)
         if not advisors:
             return jsonify({'error': 'No advisors found'}), 500
         return jsonify({'success': True, 'advisors': advisors})
     except Exception as e:
         print(f"[api] scrape-advisors error: {e}", flush=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/fetch-advisor-detail', methods=['POST'])
+@login_required
+def api_fetch_advisor_detail():
+    """Fetch a single advisor detail page on demand."""
+    data = request.get_json() or {}
+    url = data.get('url') or data.get('source_url')
+    name = data.get('name', '')
+    school = data.get('school', '')
+    college = data.get('college', '')
+    list_url = data.get('list_url', '')
+    model = data.get('model') or DEFAULT_MODEL
+
+    if not url:
+        return jsonify({'error': 'url is required'}), 400
+
+    try:
+        profile = crawl_single_detail(
+            name=name or url,
+            url=url,
+            school=school,
+            college=college,
+            list_url=list_url,
+            model=model,
+        )
+        return jsonify({'success': True, 'profile': profile})
+    except Exception as e:
+        print(f"[api] fetch-advisor-detail error: {e}", flush=True)
         return jsonify({'error': str(e)}), 500
 
 

@@ -1,5 +1,10 @@
 # Repository Guidelines（仓库指南）
 
+## 最新改动速览（2026-01-04）
+- 爬虫 agent：`/api/scrape-advisors` 仅返回名单页卡片，按需用 `/api/fetch-advisor-detail` 抓单个详情页；`crawl_advisors`/`crawl_bulk` 支持 `include_details`，新增 `crawl_single_detail`。
+- 前端：卡片 “View” 打开弹窗，点 “Fetch detail” 触发详情抓取并即时刷新；列表批次 `limit=20`（默认总 50），Find Matches 会先重置 crawler 状态再重新抓取。
+- 选中去重：以 `source_url`（或 `name|email`）为唯一 key，避免同名互勾；详情抓取完成会更新当前弹窗。
+
 ## 项目结构与模块组织
 
 - `app.py`：Flask Web 入口（路由 + session/密码保护）。
